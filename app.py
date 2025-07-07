@@ -3,40 +3,13 @@ from datetime import datetime
 import sqlite3
 import joblib
 import pandas as pd
+from recipe_data import RECIPES 
 
 app = Flask(__name__)
 
 # Load ML model
 model = joblib.load("recipe_model.joblib")
 
-
-RECIPES = [
-    {
-        "name": "Vegetable Stir Fry",
-        "ingredients": ["carrot", "broccoli", "bell pepper", "soy sauce"],
-        "description": "Quick and healthy stir-fry!"
-    },
-    {
-        "name": "Banana Smoothie",
-        "ingredients": ["banana", "milk", "yogurt", "honey"],
-        "description": "Creamy and delicious."
-    },
-    {
-        "name": "Tomato Pasta",
-        "ingredients": ["tomato", "pasta", "garlic", "olive oil"],
-        "description": "Classic Italian dish."
-    },
-    {
-        "name": "Scrambled Eggs",
-        "ingredients": ["egg", "butter", "salt", "pepper"],
-        "description": "Simple breakfast favorite."
-    },
-    {
-        "name": "Fruit Salad",
-        "ingredients": ["apple", "banana", "orange", "yogurt"],
-        "description": "Refreshing and light."
-    }
-]
 
 app = Flask(__name__)
 
@@ -64,8 +37,14 @@ def get_expiring_soon(foods):
         expiry_date = datetime.strptime(food[2], "%Y-%m-%d").date()
         days_left = (expiry_date - today).days
         
-        if days_left <= 7:  # Show items expiring in a week
-            expiring.append((food[0], food[1], food[2], days_left))  # Include days_left
+        if days_left <= 7:
+            # Return as dictionary for clearer access
+            expiring.append({
+                "id": food[0],
+                "name": food[1],
+                "expiry_date": food[2],
+                "days_left": days_left
+            })
     
     return expiring
 
@@ -88,8 +67,11 @@ def delete_food(food_id):
     return redirect("/")
 
 #using model
-def predict_recipe_quality(recipe, expiring_names, expiring_days):
+def predict_recipe_quality(recipe, expiring_items):
     """Predict if recipe is good match (1) or poor match (0)"""
+    expiring_names = [item['name'].lower() for item in expiring_items]
+    expiring_days = [item['days_left'] for item in expiring_items]
+    
     matched = sum(ing.lower() in expiring_names for ing in recipe["ingredients"])
     total = len(recipe["ingredients"])
     
@@ -113,28 +95,46 @@ def predict_recipe_quality(recipe, expiring_names, expiring_days):
 
 @app.route("/")
 def home():
-    with get_db() as conn:
-        foods = conn.execute("SELECT * FROM inventory").fetchall()
-    
-    expiring = get_expiring_soon(foods)
-    expiring_names = [food[1].lower() for food in expiring]
-    expiring_days = [food[3] for food in expiring]
-    
-    # Score all recipes
-    scored_recipes = []
-    for recipe in RECIPES:
-        score = predict_recipe_quality(recipe, expiring_names, expiring_days)
-        if score == 1:
-            recipe["match_reason"] = (
-                f"Uses {sum(ing.lower() in expiring_names for ing in recipe['ingredients'])} "
-                f"of your expiring ingredients"
-            )
-            scored_recipes.append(recipe)
-    
-    return render_template("index.html",
-                         foods=foods,
-                         expiring=expiring,
-                         recipes=scored_recipes)
+    try:
+        with get_db() as conn:
+            foods = conn.execute("SELECT * FROM inventory").fetchall()
+            print(f"DEBUG: Retrieved {len(foods)} food items")
+        
+        if not foods:
+            print("DEBUG: No foods found in database")
+            foods = []
+
+        expiring = get_expiring_soon(foods)
+        
+        # Score all recipes
+        scored_recipes = []
+        for recipe in RECIPES:
+            score = predict_recipe_quality(recipe, expiring)
+            if score == 1:
+                expiring_names = [item['name'].lower() for item in expiring]
+                matched = sum(ing.lower() in expiring_names for ing in recipe["ingredients"])
+                recipe["match_info"] = {
+                    "score": score,
+                    "matched": matched,
+                    "total": len(recipe["ingredients"]),
+                    "percentage": int((matched / len(recipe["ingredients"])) * 100),
+                    "missing": [ing for ing in recipe["ingredients"] 
+                              if ing.lower() not in expiring_names]
+                }
+                scored_recipes.append(recipe)
+        
+        scored_recipes.sort(key=lambda x: x["match_info"]["percentage"], reverse=True)
+        
+        return render_template(
+            "index.html",
+            foods=foods,
+            expiring=expiring,
+            recipes=scored_recipes
+        )
+        
+    except Exception as e:
+        print(f"ERROR: {str(e)}")
+        return render_template("error.html"), 500
 
 
 

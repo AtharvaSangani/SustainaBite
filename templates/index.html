@@ -3,57 +3,79 @@
 <head>
     <title>Sustainabite</title>
     <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
 <body>
+    <div class="container">
+        <h1><i class="fas fa-leaf"></i> Sustainabite</h1>
+        
+        <form action="/add" method="POST" class="add-form">
+            <input type="text" name="food" placeholder="Enter food item" required>
+            <input type="date" name="expiry" required>
+            <button type="submit"><i class="fas fa-plus"></i> Add</button>
+        </form>
 
-    <h1>Add Your Food</h1>
-    <form action="/add" method="POST">
-        <input type="text" name="food" placeholder="Enter food item">
-        <input type="date" name="expiry">
-        <button type="submit">Add</button>
-    </form>
+        {% if foods %}
+        <div class="inventory-section">
+            <h2><i class="fas fa-box-open"></i> Your Inventory</h2>
+            <ul>
+                {% for food in foods %}
+                <li>
+                    {{ food[1] }} (expires {{ food[2] }})
+                    <a href="/delete/{{ food[0] }}" class="delete-btn">
+                        <i class="fas fa-trash"></i>
+                    </a>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
 
+        {% if expiring %}
+        <h3 class="expiring">⚠️ Expiring Soon!</h3>
+        <ul>
+            {% for item in expiring %}
+            <li class="expiring">
+                {{ item.name }} (expires in {{ item.days_left }} days)
+                <a href="/delete/{{ item.id }}" style="color: red; margin-left: 10px;">❌ Delete</a>
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
 
-    
-    <h2>Your Food:</h2>
-    <ul>
-        {% for food in foods %}
-        <li>
-            {{ food[1] }} (expires {{ food[2] }})
-            <a href="/delete/{{ food[0] }}" style="color: red; margin-left: 10px;">❌ Delete</a>
-        </li>
-        {% endfor %}
-    </ul>
-
-    
-    {% if expiring %}
-<h3 class="expiring">⚠️ Expiring Soon!</h3>
-<ul>
-    {% for food in expiring %}
-    <li class="expiring">
-        {{ food[1] }} (expires in {{ food[3] }} days)
-        <a href="/delete/{{ food[0] }}" style="color: red; margin-left: 10px;">❌ Delete</a>
-    </li>
-    {% endfor %}
-</ul>
-{% endif %}
-
-
-{% if recipes %}
-<h3>🍳 AI-Suggested Recipes</h3>
-<ul>
-    {% for recipe in recipes %}
-    <li style="margin-bottom: 15px; background: #e8f5e9; padding: 10px;">
-        <strong>{{ recipe.name }}</strong><br>
-        {{ recipe.description }}<br>
-        <small>Uses: {{ recipe.ingredients|join(", ") }}</small><br>
-        <em style="color: #2e7d32;">{{ recipe.match_reason }}</em>
-    </li>
-    {% endfor %}
-</ul>
-{% endif %}
-
-
-    
+        {% if recipes %}
+        <div class="recipes-section">
+            <h2><i class="fas fa-utensils"></i> Suggested Recipes</h2>
+            
+            {% for recipe in recipes %}
+            <div class="recipe-card">
+                <h3>{{ recipe.name }}</h3>
+                <p class="description">{{ recipe.description }}</p>
+                
+                <div class="match-quality">
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="--progress-width: {{ recipe.match_info.percentage }}%">
+                        </div>
+                    </div>
+                    <span class="match-text">
+                        {{ recipe.match_info.percentage }}% match • 
+                        {{ recipe.match_info.matched }}/{{ recipe.match_info.total }} ingredients
+                    </span>
+                </div>
+                
+                {% if recipe.match_info.missing %}
+                <div class="missing-ingredients">
+                    <p><i class="fas fa-info-circle"></i> Missing: {{ recipe.match_info.missing|join(", ") }}</p>
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="no-recipes">
+            <p>No recipes match your current ingredients. Try adding more items!</p>
+        </div>
+        {% endif %}
+    </div>
 </body>
 </html>
