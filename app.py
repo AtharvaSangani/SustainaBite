@@ -7,18 +7,18 @@ from recipe_data import RECIPES
 
 app = Flask(__name__)
 
-# Load ML model
+# Loading ML model
 model = joblib.load("recipe_model.joblib")
 
 
 app = Flask(__name__)
 
-# Create database connection
+# Creating database connection
 def get_db():
     conn = sqlite3.connect('food.db')
     return conn
 
-# Initialize database
+# Initializing database
 with get_db() as conn:
     conn.execute("""
     CREATE TABLE IF NOT EXISTS inventory (
@@ -38,7 +38,7 @@ def get_expiring_soon(foods):
         days_left = (expiry_date - today).days
         
         if days_left <= 7:
-            # Return as dictionary for clearer access
+            # Returning as dictionary for clearer access
             expiring.append({
                 "id": food[0],
                 "name": food[1],
@@ -78,7 +78,7 @@ def predict_recipe_quality(recipe, expiring_items):
     if matched == 0:
         return 0  # No match
     
-    # Calculate features
+    # Calculating features
     match_ratio = matched / total
     avg_days = sum(expiring_days) / matched
     
@@ -106,7 +106,7 @@ def home():
 
         expiring = get_expiring_soon(foods)
         
-        # Score all recipes
+        # Scoring all recipes
         scored_recipes = []
         for recipe in RECIPES:
             score = predict_recipe_quality(recipe, expiring)
@@ -135,9 +135,6 @@ def home():
     except Exception as e:
         print(f"ERROR: {str(e)}")
         return render_template("error.html"), 500
-
-
-
 
 
 
