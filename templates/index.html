@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sustainabite</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+    <h1>Add Your Food</h1>
+    <form action="/add" method="POST">
+        <input type="text" name="food" placeholder="Enter food item">
+        <input type="date" name="expiry">
+        <button type="submit">Add</button>
+    </form>
+
+
+    
+    <h2>Your Food:</h2>
+    <ul>
+        {% for food in foods %}
+        <li>
+            {{ food[1] }} (expires {{ food[2] }})
+            <a href="/delete/{{ food[0] }}" style="color: red; margin-left: 10px;">❌ Delete</a>
+        </li>
+        {% endfor %}
+    </ul>
+
+    
+    {% if expiring %}
+<h3 class="expiring">⚠️ Expiring Soon!</h3>
+<ul>
+    {% for food in expiring %}
+    <li class="expiring">
+        {{ food[1] }} (expires in {{ food[3] }} days)
+        <a href="/delete/{{ food[0] }}" style="color: red; margin-left: 10px;">❌ Delete</a>
+    </li>
+    {% endfor %}
+</ul>
+{% endif %}
+
+
+{% if recipes %}
+<h3>🍳 AI-Suggested Recipes</h3>
+<ul>
+    {% for recipe in recipes %}
+    <li style="margin-bottom: 15px; background: #e8f5e9; padding: 10px;">
+        <strong>{{ recipe.name }}</strong><br>
+        {{ recipe.description }}<br>
+        <small>Uses: {{ recipe.ingredients|join(", ") }}</small><br>
+        <em style="color: #2e7d32;">{{ recipe.match_reason }}</em>
+    </li>
+    {% endfor %}
+</ul>
+{% endif %}
+
+
+    
+</body>
+</html>
