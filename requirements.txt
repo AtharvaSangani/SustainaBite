@@ -8,7 +8,6 @@ keyboard==0.13.5
 pandas==2.2.3
 passlib==1.7.4
 psycopg2-binary==2.9.10
-pygame==2.1.2
 pyjwt==2.9.0
 pymysql==1.1.1
 pyserial==3.5
