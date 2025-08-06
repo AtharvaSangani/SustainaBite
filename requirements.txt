@@ -1,2 +1,4 @@
 flask
 joblib
+numpy
+pandas
