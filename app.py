@@ -1,149 +1,141 @@
-from flask import Flask, render_template, request, redirect
-from datetime import datetime
+from flask import Flask, render_template, request, redirect, url_for
+from datetime import datetime, timedelta
 import sqlite3
 import joblib
 import pandas as pd
-from recipe_data import RECIPES 
+import numpy as np
+from recipe_data import RECIPES
 
 app = Flask(__name__)
 
-# Loading ML model
-model = joblib.load("recipe_model.joblib")
+# Load models
+expiry_model = joblib.load('expiry_model.joblib')
 
-
-app = Flask(__name__)
-
-# Creating database connection
+# Database setup
 def get_db():
     conn = sqlite3.connect('food.db')
+    conn.row_factory = sqlite3.Row
     return conn
 
-# Initializing database
-with get_db() as conn:
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS inventory (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        food TEXT,
-        expiry DATE
-    )
-    """)
-
-#Expiring soon
-def get_expiring_soon(foods):
-    today = datetime.now().date()
-    expiring = []
-    
-    for food in foods:
-        expiry_date = datetime.strptime(food[2], "%Y-%m-%d").date()
-        days_left = (expiry_date - today).days
-        
-        if days_left <= 7:
-            # Returning as dictionary for clearer access
-            expiring.append({
-                "id": food[0],
-                "name": food[1],
-                "expiry_date": food[2],
-                "days_left": days_left
-            })
-    
-    return expiring
-
-
-@app.route("/add", methods=["POST"])
-def add_food():
-    food = request.form["food"]
-    expiry = request.form["expiry"]
-    
+# Initialize database with proper schema
+def init_db():
     with get_db() as conn:
-        conn.execute("INSERT INTO inventory (food, expiry) VALUES (?, ?)", 
-                    (food, expiry))
-    
-    return redirect("/")
-
-@app.route("/delete/<int:food_id>")
-def delete_food(food_id):
-    with get_db() as conn:
-        conn.execute("DELETE FROM inventory WHERE id = ?", (food_id,))
-    return redirect("/")
-
-#using model
-def predict_recipe_quality(recipe, expiring_items):
-    """Predict if recipe is good match (1) or poor match (0)"""
-    expiring_names = [item['name'].lower() for item in expiring_items]
-    expiring_days = [item['days_left'] for item in expiring_items]
-    
-    matched = sum(ing.lower() in expiring_names for ing in recipe["ingredients"])
-    total = len(recipe["ingredients"])
-    
-    if matched == 0:
-        return 0  # No match
-    
-    # Calculating features
-    match_ratio = matched / total
-    avg_days = sum(expiring_days) / matched
-    
-    features = pd.DataFrame([[
-        matched,
-        total,
-        avg_days,
-        match_ratio
-    ]], columns=["matched_ingredients", "total_ingredients", 
-                "avg_days_to_expiry", "match_ratio"])
-    
-    return model.predict(features)[0]
-
-
-@app.route("/")
-def home():
-    try:
-        with get_db() as conn:
-            foods = conn.execute("SELECT * FROM inventory").fetchall()
-            print(f"DEBUG: Retrieved {len(foods)} food items")
-        
-        if not foods:
-            print("DEBUG: No foods found in database")
-            foods = []
-
-        expiring = get_expiring_soon(foods)
-        
-        # Scoring all recipes
-        scored_recipes = []
-        for recipe in RECIPES:
-            score = predict_recipe_quality(recipe, expiring)
-            if score == 1:
-                expiring_names = [item['name'].lower() for item in expiring]
-                matched = sum(ing.lower() in expiring_names for ing in recipe["ingredients"])
-                recipe["match_info"] = {
-                    "score": score,
-                    "matched": matched,
-                    "total": len(recipe["ingredients"]),
-                    "percentage": int((matched / len(recipe["ingredients"])) * 100),
-                    "missing": [ing for ing in recipe["ingredients"] 
-                              if ing.lower() not in expiring_names]
-                }
-                scored_recipes.append(recipe)
-        
-        scored_recipes.sort(key=lambda x: x["match_info"]["percentage"], reverse=True)
-        
-        return render_template(
-            "index.html",
-            foods=foods,
-            expiring=expiring,
-            recipes=scored_recipes
+        conn.execute('''
+        CREATE TABLE IF NOT EXISTS inventory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_name TEXT NOT NULL,
+            item_type TEXT NOT NULL,
+            best_before DATE NOT NULL,
+            storage TEXT NOT NULL,
+            opened INTEGER DEFAULT 0,
+            predicted_expiry DATE,
+            confidence FLOAT,
+            days_remaining INTEGER
         )
-        
-    except Exception as e:
-        print(f"ERROR: {str(e)}")
-        return render_template("error.html"), 500
+        ''')
+        conn.commit()
 
+# Call this function at startup
+init_db()
 
+# Prediction function with confidence
+def predict_expiry_with_confidence(item_data):
+    input_df = pd.DataFrame([{
+        'item_type': item_data['item_type'],
+        'storage': item_data['storage'],
+        'initial_quality': 0.95,
+        'opened': item_data['opened'],
+        'temperature_variation': 1.0
+    }])
+    
+    model = expiry_model.named_steps['regressor']
+    preprocessor = expiry_model.named_steps['preprocessor']
+    
+    X = preprocessor.transform(input_df)
+    days_pred = model.predict(X)[0]
+    days_pred = max(1, round(days_pred))
+    
+    tree_preds = [tree.predict(X)[0] for tree in model.estimators_]
+    confidence = 1 - (np.std(tree_preds) / days_pred if days_pred > 0 else 1.0)
+    
+    expiry_date = (datetime.strptime(item_data['best_before'], '%Y-%m-%d') + 
+                  timedelta(days=days_pred)).strftime('%Y-%m-%d')
+    
+    return expiry_date, min(1.0, max(0.5, confidence))
 
+# Routes
+@app.route('/')
+def home():
+    with get_db() as conn:
+        try:
+            items = conn.execute('''
+                SELECT *, 
+                       julianday(predicted_expiry) - julianday('now') as days_remaining
+                FROM inventory
+                ORDER BY predicted_expiry
+            ''').fetchall()
+        except sqlite3.OperationalError as e:
+            print(f"Database error: {e}")
+            items = []
+    
+    today = datetime.now().date()
+    return render_template('index.html', items=items, today=today)
 
+@app.route('/add', methods=['POST'])
+def add_item():
+    item_data = {
+        'item_name': request.form['item_name'],
+        'item_type': request.form['item_type'],
+        'best_before': request.form['best_before'],
+        'storage': request.form['storage'],
+        'opened': 1 if 'opened' in request.form else 0
+    }
+    
+    expiry_date, confidence = predict_expiry_with_confidence(item_data)
+    days_remaining = (datetime.strptime(expiry_date, '%Y-%m-%d').date() - datetime.now().date()).days
+    
+    with get_db() as conn:
+        conn.execute('''
+            INSERT INTO inventory 
+            (item_name, item_type, best_before, storage, opened, 
+             predicted_expiry, confidence, days_remaining)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            item_data['item_name'],
+            item_data['item_type'],
+            item_data['best_before'],
+            item_data['storage'],
+            item_data['opened'],
+            expiry_date,
+            confidence,
+            days_remaining
+        ))
+        conn.commit()
+    
+    return redirect(url_for('home'))
 
+@app.route('/delete/<int:item_id>')
+def delete_item(item_id):
+    with get_db() as conn:
+        conn.execute('DELETE FROM inventory WHERE id = ?', (item_id,))
+        conn.commit()
+    return redirect(url_for('home'))
 
+@app.route('/recipes')
+def recipes():
+    with get_db() as conn:
+        items = conn.execute('SELECT item_name FROM inventory').fetchall()
+        item_names = [item['item_name'].lower() for item in items]
+    
+    matched_recipes = []
+    for recipe in RECIPES:
+        matched = sum(ing.lower() in item_names for ing in recipe["ingredients"])
+        if matched >= 2:
+            recipe['match_score'] = matched
+            matched_recipes.append(recipe)
+    
+    matched_recipes.sort(key=lambda x: x['match_score'], reverse=True)
+    return render_template('recipes.html', recipes=matched_recipes)
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     app.run(debug=True)
-
-
-
